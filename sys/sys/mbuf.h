@@ -651,6 +651,7 @@ m_epg_pagelen(const struct mbuf *m, int pidx, int pgoff)
 #define	CSUM_INNER_IP_TSO	0x00020000
 
 #define	CSUM_ENCAP_VXLAN	0x00040000	/* VXLAN outer encapsulation */
+#define	CSUM_ENCAP_GENEVE	0x00080000	/* GENEVE outer encapsulation */
 #define	CSUM_ENCAP_RSVD1	0x00080000
 
 /* Inbound checksum support where the checksum was verified by hardware. */

@@ -249,7 +249,9 @@ struct if_data {
 #define	IFCAP_TXTLS4		0x8000000 /* can do TLS encryption and segmentation for TCP */
 #define	IFCAP_TXTLS6		0x10000000 /* can do TLS encryption and segmentation for TCP6 */
 #define	IFCAP_VXLAN_HWCSUM	0x20000000 /* can do IFCAN_HWCSUM on VXLANs */
+#define	IFCAP_GENEVE_HWCSUM	0x20000000 /* can do IFCAN_HWCSUM on GENEVEs */
 #define	IFCAP_VXLAN_HWTSO	0x40000000 /* can do IFCAP_TSO on VXLANs */
+#define	IFCAP_GENEVE_HWTSO	0x40000000 /* can do IFCAP_TSO on GENEVEs */
 #define	IFCAP_TXTLS_RTLMT	0x80000000 /* can do TLS with rate limiting */
 
 #define IFCAP_HWCSUM_IPV6	(IFCAP_RXCSUM_IPV6 | IFCAP_TXCSUM_IPV6)
