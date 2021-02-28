@@ -2852,6 +2852,9 @@ geneve_output(struct ifnet *ifp, struct mbuf *m,
 
 	geneve_sockaddr_copy(&gnvsa, &fe->gnvfe_raddr.sa);
 	ipv4 = GENEVE_SOCKADDR_IS_IPV4(&gnvsa) != 0;
+
+	GENEVE_ACQUIRE(sc);
+
 	if (ipv4) {
 		error = geneve_encap4(sc, &gnvsa, m, ul_type);
 	} else {
