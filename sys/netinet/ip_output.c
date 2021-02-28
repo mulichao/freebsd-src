@@ -1226,6 +1226,14 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 				break;
 
 			switch (sopt->sopt_name) {
+			case IP_FLOWID:
+				inp->inp_flowid = optval;
+				break;
+
+			case IP_FLOWTYPE:
+				inp->inp_flowtype = optval;
+				break;
+
 			case IP_TOS:
 				inp->inp_ip_tos = optval;
 				break;
