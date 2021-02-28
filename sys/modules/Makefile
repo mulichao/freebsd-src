@@ -154,6 +154,7 @@ SUBDIR=	\
 	if_edsc \
 	${_if_enc} \
 	if_epair \
+	if_geneve \
 	${_if_gif} \
 	${_if_gre} \
 	${_if_me} \

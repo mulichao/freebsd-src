@@ -33,6 +33,7 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/endian.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -186,6 +187,7 @@ struct geneve_softc {
 	uint32_t			 gnv_ftable_cnt;
 	uint32_t			 gnv_ftable_max;
 	uint32_t			 gnv_ftable_timeout;
+	uint32_t			 gnv_cookie_enabled;
 	uint32_t			 gnv_ftable_hash_key;
 	struct geneve_ftable_head	*gnv_ftable;
 
@@ -427,7 +429,7 @@ static int	geneve_modevent(module_t, int, void *);
 
 static const char geneve_name[] = "geneve";
 static MALLOC_DEFINE(M_GENEVE, geneve_name,
-    "Virtual eXtensible LAN Interface");
+    "Generic Network Virtualization Encapsulation Interface");
 static struct if_clone *geneve_cloner;
 
 static struct mtx geneve_list_mtx;
@@ -440,7 +442,7 @@ static eventhandler_tag geneve_ifdetach_event_tag;
 
 SYSCTL_DECL(_net_link);
 SYSCTL_NODE(_net_link, OID_AUTO, geneve, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
-    "Virtual eXtensible Local Area Network");
+    "Generic Network Virtualization Encapsulation");
 
 static int geneve_legacy_port = 0;
 TUNABLE_INT("net.link.geneve.legacy_port", &geneve_legacy_port);
@@ -2502,25 +2504,26 @@ geneve_encap_header(struct geneve_softc *sc, struct mbuf *m, int ipoff,
 	gnvh->gnvh_vni = htonl(sc->gnv_vni << GENEVE_HDR_VNI_SHIFT);
 
 	gnvo = (struct geneve_opthdr *)(hdr + 1);
+	gnvh->gnvh_optlen = 0;
 	if (sc->gnv_aws_eni_id != 0) {
 		gnvo->gnvo_class = htons(0x0108);
 		gnvo->gnvo_type = 1;
 		gnvo->gnvo_length = 2;
 		aws_eni_id_p = (uint64_t *)(gnvo + 1);
-		*aws_eni_id_p = htonl(sc->gnv_aws_eni_id);
+		*aws_eni_id_p = htobe64(sc->gnv_aws_eni_id);
 		gnvo += 3;
+		gnvh->gnvh_optlen += 3;
+	}
 
+	if (sc->gnv_cookie_enabled && M_HASHTYPE_TEST(m, M_HASHTYPE_AWS)) {
 		gnvo->gnvo_class = htons(0x0108);
-		gnvo->gnvo_type = 2;
+		gnvo->gnvo_type = 3;
 		gnvo->gnvo_length = 1;
 		cookie_p = (uint32_t *)(gnvo + 1);
 		*cookie_p = htonl(m->m_pkthdr.flowid);
-
-		gnvh->gnvh_optlen = 5;
-	} else {
-		gnvh->gnvh_optlen = 0;
+		gnvo += 2;
+		gnvh->gnvh_optlen += 2;
 	}
-
 }
 #endif
 
@@ -2589,10 +2592,13 @@ geneve_encap4(struct geneve_softc *sc, const union geneve_sockaddr *fgnvsa,
 	dstaddr = fgnvsa->in4.sin_addr;
 	dstport = fgnvsa->in4.sin_port;
 
+	optlen = 0;
 	if (sc->gnv_aws_eni_id != 0) {
-		optlen = 20;
-	} else {
-		optlen = 0;
+		optlen += 12;
+	}
+
+	if (sc->gnv_cookie_enabled && M_HASHTYPE_TEST(m, M_HASHTYPE_AWS)) {
+		optlen += 8;
 	}
 
 	M_PREPEND(m, sizeof(struct ip) + sizeof(struct geneveudphdr) + optlen,
@@ -2913,7 +2919,7 @@ geneve_qflush(struct ifnet *ifp __unused)
 }
 
 static void
-geneve_parse_opts(struct mbuf *m, int offset, int optlen, uint64_t *aws_eni_id, uint32_t *cookie)
+geneve_parse_opts(struct mbuf *m, int offset, int optlen, uint64_t *aws_eni_id)
 {
 	uint8_t opt[260];
 	struct geneve_opthdr *gnvoh;
@@ -2935,22 +2941,21 @@ geneve_parse_opts(struct mbuf *m, int offset, int optlen, uint64_t *aws_eni_id, 
 			case 1: /* 64-bit GWLBE ENI ID */
 				aws_eni_id_p = (uint64_t *)(optp + sizeof(struct geneve_opthdr));
 				if (aws_eni_id) {
-					*aws_eni_id = ntohl(*aws_eni_id_p);
+					*aws_eni_id = be64toh(*aws_eni_id_p);
 				}
 				break;
 			case 2: /* 64-bit Customer Visible Attachment ID */
 				break;
 			case 3: /* 32-bit Flow Cookie */
 				cookie_p = (uint32_t *)(optp + sizeof(struct geneve_opthdr));
-				if (cookie) {
-					*cookie = ntohl(*cookie_p);
-				}
+				m->m_pkthdr.flowid = ntohl(*cookie_p);
+				M_HASHTYPE_SET(m, M_HASHTYPE_AWS);
 				break;
 			default:
 				break;
 			}
 		}
-		optp += gnvoh->gnvo_length + 1;
+		optp += ((gnvoh->gnvo_length + 1) << 2);
 		optlen -= gnvoh->gnvo_length + 1;
 	}
 }
@@ -2984,7 +2989,7 @@ geneve_rcv_udp_packet(struct mbuf *m, int offset, struct inpcb *inpcb,
 	ul_type = ntohs(vxh->gnvh_proto);
 	if (vxh->gnvh_optlen > 0) {
 		geneve_parse_opts(m, offset + sizeof(struct geneve_header),
-		    vxh->gnvh_optlen, &aws_eni_id, &m->m_pkthdr.flowid);
+		    vxh->gnvh_optlen, &aws_eni_id);
 	} else {
 		aws_eni_id = 0;
 	}
@@ -3012,8 +3017,9 @@ geneve_input(struct geneve_socket *vso, uint32_t vni, uint64_t aws_eni_id,
 	int isr;
 
 	sc = geneve_socket_lookup_softc(vso, vni, aws_eni_id);
-	if (sc == NULL)
+	if (sc == NULL) {
 		return (ENOENT);
+	}
 
 	ifp = sc->gnv_ifp;
 	m = *m0;
@@ -3140,6 +3146,7 @@ geneve_set_default_config(struct geneve_softc *sc)
 
 	sc->gnv_ftable_max = GENEVE_FTABLE_MAX;
 	sc->gnv_ftable_timeout = GENEVE_FTABLE_TIMEOUT;
+	sc->gnv_cookie_enabled = 0;
 }
 
 static int
@@ -3743,6 +3750,9 @@ geneve_sysctl_setup(struct geneve_softc *sc)
 	SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(node), OID_AUTO, "timeout",
 	    CTLFLAG_RD, &sc->gnv_ftable_timeout, 0,
 	    "Number of seconds between prunes of the forwarding table");
+	SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(node), OID_AUTO, "cookie_enabled",
+	    CTLFLAG_RW, &sc->gnv_cookie_enabled, 0,
+	    "AWS Flow Cookie option is enabled");
 	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(node), OID_AUTO, "dump",
 	    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP,
 	    sc, 0, geneve_ftable_sysctl_dump, "A",

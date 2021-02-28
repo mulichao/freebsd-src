@@ -547,6 +547,7 @@ m_epg_pagelen(const struct mbuf *m, int pidx, int pgoff)
 #define	M_HASHTYPE_RSS_UDP_IPV6		M_HASHTYPE_HASH(9) /* IPv6 UDP 4-tuple*/
 #define	M_HASHTYPE_RSS_UDP_IPV6_EX	M_HASHTYPE_HASH(10)/* IPv6 UDP 4-tuple +
 							    * ext hdrs */
+#define	M_HASHTYPE_AWS			M_HASHTYPE_HASH(11)/* AWS cookie */
 
 #define	M_HASHTYPE_OPAQUE		63	/* ordering, not affinity */
 #define	M_HASHTYPE_OPAQUE_HASH		M_HASHTYPE_HASH(M_HASHTYPE_OPAQUE)
